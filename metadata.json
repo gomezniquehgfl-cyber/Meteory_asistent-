@@ -1,0 +1,10 @@
+{
+  "name": "Meteory Asisten",
+  "description": "Asistente inteligente con interfaz futurista neón azul marino fosforescente, esfera 3D de rayos de plasma reactiva en tiempo real y síntesis de voz Jarvis.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

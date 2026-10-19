@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Perfil, configuración, clave API personal y memoria de aprendizaje de cada usuario en METEORY ASISTEN.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "ID único de autenticación de Firebase del usuario.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "description": "Correo electrónico del usuario.",
+          "maxLength": 256
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Nombre de perfil del usuario.",
+          "maxLength": 128
+        },
+        "customUserName": {
+          "type": "string",
+          "description": "Nombre o distintivo de operador elegido para el asistente Jarvis.",
+          "maxLength": 64
+        },
+        "geminiApiKey": {
+          "type": "string",
+          "description": "Clave API personal de Gemini del usuario para evitar uso compartido y prevenir fraudes.",
+          "maxLength": 256
+        },
+        "userMemories": {
+          "type": "array",
+          "description": "Memoria de aprendizaje acumulada sobre las preferencias y estilo del usuario.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "preferredEngine": {
+          "type": "string",
+          "description": "Motor de inferencia preferido: cloud o local.",
+          "enum": ["cloud", "local"]
+        },
+        "lastLoginAt": {
+          "type": "string",
+          "description": "Marca de tiempo ISO del último inicio de sesión.",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Marca de tiempo ISO de creación del perfil.",
+          "maxLength": 64
+        }
+      },
+      "required": ["userId", "email"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Colección de perfiles de usuario y claves API personales."
+    }
+  }
+}
