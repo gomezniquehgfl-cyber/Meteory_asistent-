@@ -12,6 +12,9 @@
   },
   "dependencies": {
     "@andresaya/edge-tts": "^1.9.1",
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/cli": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tensorflow-models/face-landmarks-detection": "^1.0.6",

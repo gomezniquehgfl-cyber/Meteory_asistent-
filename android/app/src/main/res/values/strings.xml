@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Meteory IA</string>
+    <string name="title_activity_main">Meteory IA</string>
+    <string name="package_name">com.meteory.ai.asisten</string>
+    <string name="custom_url_scheme">com.meteory.ai.asisten</string>
+</resources>

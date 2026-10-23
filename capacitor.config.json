@@ -1,0 +1,9 @@
+{
+  "appId": "com.meteory.ai.asisten",
+  "appName": "Meteory IA",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "android": {
+    "webContentsDebuggingEnabled": true
+  }
+}

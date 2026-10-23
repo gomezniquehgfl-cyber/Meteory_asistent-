@@ -26,6 +26,9 @@ jobs:
       - name: Build Web App
         run: npm run build
 
+      - name: Sync Capacitor Android Project
+        run: npx cap sync android
+
       - name: Bundle Coqui XTTS v2 GGUF & Custom App Icon for APK
         run: |
           echo "=== PREPARING APK ASSETS & XTTS GGUF MODEL ==="
@@ -61,24 +64,19 @@ jobs:
         with:
           packages: 'platforms;android-34 build-tools;34.0.0 platform-tools'
 
-      - name: Build APK Artifact via Gradle
+      - name: Build Native Android APK via Gradle
         run: |
-          echo "=== BUILDING APK VIA GRADLE ==="
-          if [ -d "android" ] && [ -f "android/gradlew" ]; then
-            cd android
-            chmod +x gradlew || true
-            ./gradlew assembleDebug || echo "Gradle build ready."
-            cd ..
-          else
-            echo "Android project structure prepared with assets and launcher icons successfully."
-          fi
-          echo "=== METEORY IA ANDROID APK BUILD COMPLETED ==="
+          echo "=== BUILDING NATIVE ANDROID APK VIA GRADLE ==="
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+          cd ..
+          echo "=== METEORY IA NATIVE APK BUILD COMPLETED ==="
 
-      - name: Upload Build Artifacts
+      - name: Upload Compiled APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: meteory-ia-dist-and-apk
+          name: meteory-ia-native-apk
           path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
             dist/
-            android/app/build/outputs/apk/
-            android/app/src/main/assets/
