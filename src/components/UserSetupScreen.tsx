@@ -8,20 +8,25 @@ interface UserSetupScreenProps {
 
 export const UserSetupScreen: React.FC<UserSetupScreenProps> = ({ initialName = '', onConfirm }) => {
   const [name, setName] = useState(initialName || 'Niquel');
+  const [lastName, setLastName] = useState('');
   const [error, setError] = useState('');
 
   const suggestions = ['Niquel', 'Comandante', 'Tony', 'Stark', 'Alexander'];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = name.trim();
-    if (!clean) {
+    const cleanFirst = name.trim();
+    const cleanLast = lastName.trim();
+    if (!cleanFirst) {
       setError('Introduce un nombre o designación de usuario.');
       return;
     }
     setError('');
-    onConfirm(clean);
+    const fullDesignation = cleanLast ? `${cleanFirst} ${cleanLast}` : cleanFirst;
+    onConfirm(fullDesignation);
   };
+
+  const displayNamePreview = lastName.trim() ? `${name.trim()} ${lastName.trim()}` : (name.trim() || '...');
 
   return (
     <div className="relative z-10 w-full max-w-[420px] mx-auto">
@@ -41,7 +46,7 @@ export const UserSetupScreen: React.FC<UserSetupScreenProps> = ({ initialName = 
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="user-name-input" className="block text-[11px] font-mono text-slate-400 mb-1">
               Nombre o título
@@ -63,6 +68,25 @@ export const UserSetupScreen: React.FC<UserSetupScreenProps> = ({ initialName = 
               />
             </div>
             {error && <p className="text-xs text-rose-400 mt-1">{error}</p>}
+          </div>
+
+          {/* User Last Name Field as requested */}
+          <div>
+            <label htmlFor="user-lastname-input" className="block text-[11px] font-mono text-slate-400 mb-1">
+              Pon tu apellido para una mejor experiencia
+            </label>
+            <div className="relative">
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <input
+                id="user-lastname-input"
+                type="text"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                placeholder="Ej. Gómez, Stark (opcional)"
+                maxLength={24}
+                className="w-full h-10 pl-9 pr-3 text-xs bg-slate-900/50 border border-slate-800 rounded-lg text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-400/80 focus:ring-1 focus:ring-cyan-400/40 font-sans transition-all"
+              />
+            </div>
           </div>
 
           {/* Clean Suggestion Chips */}
@@ -91,7 +115,7 @@ export const UserSetupScreen: React.FC<UserSetupScreenProps> = ({ initialName = 
           {/* Voice Protocol Preview */}
           <div className="p-3 rounded-lg border border-cyan-500/20 bg-cyan-950/20 text-xs font-sans text-cyan-300/90 leading-relaxed">
             <span className="text-cyan-400 font-mono text-[11px] block mb-0.5">Protocolo de voz Jarvis:</span>
-            <span className="italic">"Señor {name || '...'}, los sistemas neuronales se encuentran en línea."</span>
+            <span className="italic">"Señor {displayNamePreview}, los sistemas neuronales se encuentran en línea."</span>
           </div>
 
           <button

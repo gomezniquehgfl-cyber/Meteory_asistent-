@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ThreeRaySphere } from './ThreeRaySphere.tsx';
 import { EngineConfig } from './EngineSetupScreen.tsx';
+import { JarvisRealisticSphere } from './JarvisRealisticSphere.tsx';
 import {
   ensureJarvisHonorific,
   detectMeteoryWakeWord,
+  isLiveModeVoiceCommand,
+  isGameMetVoiceCommand,
   extractCommandAfterWakeWord,
   cleanVoiceTextForSpeech,
   processLocalNeuralResponse,
@@ -12,6 +14,13 @@ import { jarvisVoice, sfx, NEURAL_VOICES, getApiBaseUrl } from '../utils/speech.
 import { auth, saveChatMessage, getChatHistory } from '../firebase.ts';
 import { SystemDaemon, DeviceTelemetry } from '../utils/system-daemon.ts';
 import { ReminderDaemon } from '../utils/reminder-daemon.ts';
+import { LocalOSActuator } from '../utils/local-os-actuator.ts';
+import { AndroidPermissionsModal } from './AndroidPermissionsModal.tsx';
+import {
+  AndroidPermissionsEngine,
+  PermissionCategory,
+} from '../utils/android-permissions-engine.ts';
+import { FloatingOverlayBubble } from './FloatingOverlayBubble.tsx';
 import {
   Mic,
   MicOff,
@@ -31,6 +40,8 @@ import {
   Sparkles,
   Download,
   Zap,
+  ShieldCheck,
+  Gamepad2,
 } from 'lucide-react';
 
 interface MainAssistantHUDProps {
@@ -62,7 +73,6 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [currentResponse, setCurrentResponse] = useState<string>('');
   const [showLogDrawer, setShowLogDrawer] = useState(false);
-  const [gazeRotation, setGazeRotation] = useState({ x: 0, y: 0 });
   const [speechWarning, setSpeechWarning] = useState('');
   const [tokenCount, setTokenCount] = useState(0);
 
@@ -76,18 +86,112 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
   const isWakeActiveRef = useRef(false);
   const isSpeakingRef = useRef(false);
 
-  // Custom wake word / hotword state (e.g. "Hey Meteory", "Meteory", "Jarvis")
+  // Live Mode (Modo en Vivo continuo manos libres)
+  const [isLiveMode, setIsLiveMode] = useState(false);
+  const isLiveModeRef = useRef(false);
+  const isIntentionalListeningRef = useRef(false);
+  const restartTimerRef = useRef<any>(null);
+
+  // Live real-time speech transcription & silence debouncer
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const liveTranscriptRef = useRef('');
+  const speechSilenceTimerRef = useRef<any>(null);
+
+  // Query deduplication refs to prevent double processing & duplicate question loops
+  const lastQueryRef = useRef('');
+  const lastQueryTimeRef = useRef(0);
+
+  // Custom wake word / hotword state (e.g. "Hey Meteory", "Meteori", "Meteoring")
   const [customWakeWord, setCustomWakeWord] = useState<string>(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('meteory_custom_wake_word') || 'Hey Meteory';
+      return localStorage.getItem('meteory_custom_wake_word') || 'Hey Meteori';
     }
-    return 'Hey Meteory';
+    return 'Hey Meteori';
   });
   const customWakeWordRef = useRef(customWakeWord);
+  const [showPermissionsModal, setShowPermissionsModal] = useState(false);
+  const [permissionsModalCategory, setPermissionsModalCategory] = useState<PermissionCategory | 'all'>('all');
+  const [highlightPermissionId, setHighlightPermissionId] = useState<string | undefined>(undefined);
+  const [isOverlayBubbleActive, setIsOverlayBubbleActive] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return AndroidPermissionsEngine.isOverlayPermissionGranted();
+    }
+    return false;
+  });
+
+  // Dedicated activation logic for "Modo Game Met"
+  const handleGameMetActivation = (promptText?: string) => {
+    const isGranted = AndroidPermissionsEngine.isOverlayPermissionGranted();
+
+    if (!isGranted) {
+      const needPermReply = ensureJarvisHonorific(
+        `para activar el Modo Game Met es necesario habilitar primero el permiso de superposición de aplicaciones ('Mostrar sobre otras apps'). Le dirijo ahora mismo al Centro de Permisos para su activación manual.`,
+        userName
+      );
+      setCurrentResponse(needPermReply);
+      const userMsg: MessageItem = {
+        id: `u-${Date.now()}`,
+        sender: 'user',
+        text: promptText || 'Activar Modo Game Met',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      const assistantMsg: MessageItem = {
+        id: `a-${Date.now()}`,
+        sender: 'assistant',
+        text: needPermReply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+      setPermissionsModalCategory('overlay');
+      setHighlightPermissionId('android.permission.SYSTEM_ALERT_WINDOW');
+      setShowPermissionsModal(true);
+      sfx.playProcessingTone();
+
+      if (!voiceMuted) {
+        jarvisVoice.speak(cleanVoiceTextForSpeech(needPermReply));
+      }
+      return;
+    }
+
+    // Overlay is already granted! Activate bubble and exit to home screen
+    setIsOverlayBubbleActive(true);
+    sfx.playActivationBlip();
+    const activeReply = ensureJarvisHonorific(
+      `Modo Game Met activado con monitor de FPS en tiempo real y telemetría de rendimiento. Redirigiendo a la pantalla principal del dispositivo.`,
+      userName
+    );
+    setCurrentResponse(activeReply);
+    const userMsg: MessageItem = {
+      id: `u-${Date.now()}`,
+      sender: 'user',
+      text: promptText || 'Activar Modo Game Met',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+    const assistantMsg: MessageItem = {
+      id: `a-${Date.now()}`,
+      sender: 'assistant',
+      text: activeReply,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+
+    if (!voiceMuted) {
+      jarvisVoice.speak(cleanVoiceTextForSpeech(activeReply));
+    }
+
+    // Exit / minimize to Android home screen so floating bubble operates over system launcher & games
+    setTimeout(() => {
+      AndroidPermissionsEngine.openHomeScreen();
+    }, 700);
+  };
 
   useEffect(() => {
     customWakeWordRef.current = customWakeWord;
   }, [customWakeWord]);
+
+  useEffect(() => {
+    isLiveModeRef.current = isLiveMode;
+  }, [isLiveMode]);
 
   // Speech Recognition & Audio stream references
   const recognitionRef = useRef<any>(null);
@@ -103,48 +207,6 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
       isSpeakingRef.current = speaking;
     });
     return () => unsubscribe();
-  }, []);
-
-  // Initialize face landmarks detection
-  useEffect(() => {
-    let detector: any;
-    const initTracking = async () => {
-      try {
-        // Ensure TFJS is loaded
-        await import('@tensorflow/tfjs');
-        const faceLandmarksDetection = await import('@tensorflow-models/face-landmarks-detection');
-        detector = await faceLandmarksDetection.createDetector(
-          faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-          { runtime: 'mediapipe', solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm', refineLandmarks: false }
-        );
-
-        // Setup camera stream for tracking
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        const video = document.createElement('video');
-        video.srcObject = stream;
-        video.play();
-        
-        const detect = async () => {
-          if (detector && video.readyState === 4) {
-            const faces = await detector.estimateFaces(video);
-            if (faces && faces[0]) {
-              const nose = faces[0].keypoints.find((k: any) => k.name === 'noseTip');
-              if (nose) {
-                setGazeRotation({
-                  x: (nose.y / video.height - 0.5) * 0.5,
-                  y: (nose.x / video.width - 0.5) * 0.5
-                });
-              }
-            }
-          }
-          requestAnimationFrame(detect);
-        };
-        detect();
-      } catch (e) {
-        console.warn("Face tracking disabled: Camera access denied or model failed to load", e);
-      }
-    };
-    initTracking();
   }, []);
 
   // Initialize Background Reminder Daemon
@@ -190,7 +252,7 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
       }
 
       // Default initial greeting if no history
-      const initialGreeting = `Señor ${userName}, todos los sistemas de METEORY ASISTEN se encuentran sincronizados. El núcleo 3D está operando con total estabilidad.`;
+      const initialGreeting = `Señor ${userName}, todos los sistemas de METEORY ASISTEN se encuentran sincronizados. El sistema táctico está operando con total estabilidad.`;
       setCurrentResponse(initialGreeting);
       const initialMsg: MessageItem = {
         id: 'init-1',
@@ -293,84 +355,279 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
       return;
     }
 
+    isIntentionalListeningRef.current = true;
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      micStreamRef.current = stream;
-      await startAudioMeter(stream);
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {}
+        recognitionRef.current = null;
+      }
 
       const recognition = new SpeechRecognition();
-      recognition.lang = 'es-419'; // Latin American Spanish
-      recognition.continuous = true;
+      // Use device Spanish language preference (es-MX, es-US, es-ES, etc.) or default to es-MX
+      recognition.lang =
+        typeof navigator !== 'undefined' && navigator.language && navigator.language.startsWith('es')
+          ? navigator.language
+          : 'es-MX';
+
+      const isMobile =
+        typeof navigator !== 'undefined' &&
+        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+      // On Android/mobile, continuous=true frequently stalls or freezes after pause.
+      // continuous=false + auto-restart in onend is the proven rock-solid mobile speech pattern.
+      recognition.continuous = !isMobile;
       recognition.interimResults = true;
+      recognition.maxAlternatives = 3;
 
       recognition.onstart = () => {
         setIsListening(true);
         sfx.playActivationBlip();
       };
 
+      recognition.onsoundstart = () => {
+        // Hardware microphone picked up acoustic sound -> pulse sphere
+        setMicLevel(0.65);
+      };
+
+      recognition.onspeechstart = () => {
+        // Human speech recognized by acoustic model
+        setMicLevel(0.9);
+      };
+
+      recognition.onspeechend = () => {
+        setTimeout(() => setMicLevel(0.15), 150);
+        setTimeout(() => setMicLevel(0), 400);
+      };
+
+      recognition.onsoundend = () => {
+        setTimeout(() => setMicLevel(0), 300);
+      };
+
       recognition.onresult = (event: any) => {
-        // Prevent echo if Jarvis is actively speaking
+        // Prevent feedback echo if Jarvis is actively speaking
         if (isSpeakingRef.current) return;
+        setMicLevel(0.95);
 
-        const lastIndex = event.results.length - 1;
-        const transcript = event.results[lastIndex][0].transcript;
-        const isFinal = event.results[lastIndex].isFinal;
+        // Aggregate entire utterance from speech segments
+        let fullTranscript = '';
+        let hasFinalChunk = false;
+        for (let i = 0; i < event.results.length; i++) {
+          const chunk = event.results[i][0]?.transcript || '';
+          fullTranscript += chunk + ' ';
+          if (event.results[i].isFinal) {
+            hasFinalChunk = true;
+          }
+        }
+        fullTranscript = fullTranscript.trim();
+        if (!fullTranscript) return;
 
-        // Better detection: Check if transcript contains wake word, even in interim results
-        const hasWakeWord = detectMeteoryWakeWord(transcript, customWakeWordRef.current);
+        // Inspect primary and all alternative recognition candidates for wake word variations
+        let candidateTranscript = fullTranscript;
+        for (let i = 0; i < event.results.length; i++) {
+          for (let j = 0; j < event.results[i].length; j++) {
+            const alt = event.results[i][j]?.transcript || '';
+            if (detectMeteoryWakeWord(alt, customWakeWordRef.current)) {
+              candidateTranscript = alt;
+              break;
+            }
+          }
+        }
+
+        // Update live transcript so user gets instant visual confirmation that voice is detected
+        setLiveTranscript(candidateTranscript);
+        liveTranscriptRef.current = candidateTranscript;
+
+        // Reset silence timer on every new sound/word detected
+        if (speechSilenceTimerRef.current) {
+          clearTimeout(speechSilenceTimerRef.current);
+          speechSilenceTimerRef.current = null;
+        }
+
+        const lower = candidateTranscript.toLowerCase().trim();
+
+        // 1. Check for cancel / exit live mode commands
+        if (
+          lower.includes('detener') ||
+          lower.includes('silencio') ||
+          lower.includes('cancelar modo en vivo') ||
+          lower.includes('desactivar modo') ||
+          lower.includes('apagar modo en vivo') ||
+          lower.includes('pausar modo live') ||
+          lower.includes('salir del modo live') ||
+          lower.includes('pausar')
+        ) {
+          if (hasFinalChunk || lower.endsWith('detener') || lower.endsWith('silencio')) {
+            setIsLiveMode(false);
+            isLiveModeRef.current = false;
+            setIsWakeActive(false);
+            isWakeActiveRef.current = false;
+            setLiveTranscript('');
+            liveTranscriptRef.current = '';
+            const ack = `Señor ${userName}, Modo Live pausado. El asistente vuelve a modo manual.`;
+            setCurrentResponse(ack);
+            if (!voiceMuted) jarvisVoice.speak(cleanVoiceTextForSpeech(ack));
+          }
+          return;
+        }
+
+        // 2. Explicit voice command to activate Modo Live (e.g. "Meteory activa el modo live", "Modo en vivo")
+        if (isLiveModeVoiceCommand(candidateTranscript)) {
+          setIsLiveMode(true);
+          isLiveModeRef.current = true;
+          setIsWakeActive(true);
+          isWakeActiveRef.current = true;
+          setLiveTranscript('');
+          liveTranscriptRef.current = '';
+          sfx.playActivationBlip();
+          const ack = `Señor ${userName}, Modo Live activado. Toda la comunicación es ahora 100% por voz. Le escucho atentamente al decir 'Meteory' o al hablar.`;
+          setCurrentResponse(ack);
+          if (!voiceMuted) {
+            jarvisVoice.speak(cleanVoiceTextForSpeech(ack), () => {
+              safelyResumeRecognition();
+            });
+          }
+          return;
+        }
+
+        // 2b. Explicit voice command to activate Modo Game Met (e.g. "activa tu modo game met", "modo game met")
+        if (isGameMetVoiceCommand(candidateTranscript)) {
+          setLiveTranscript('');
+          liveTranscriptRef.current = '';
+          handleGameMetActivation(candidateTranscript);
+          return;
+        }
+
+        // 3. Check for wake word in transcript ("Meteory", "Meteoro", "Mete oro", "Hey Meteori", etc.)
+        const hasWakeWord = detectMeteoryWakeWord(candidateTranscript, customWakeWordRef.current);
 
         if (hasWakeWord) {
-          // If we haven't already activated the wake state, do it now
+          // Trigger acoustic feedback & ensure Live Mode is activated!
           if (!isWakeActiveRef.current) {
             sfx.playActivationBlip();
             setIsWakeActive(true);
             isWakeActiveRef.current = true;
+            setIsLiveMode(true);
+            isLiveModeRef.current = true;
           }
 
-          // Try to extract command
-          const command = extractCommandAfterWakeWord(transcript, customWakeWordRef.current);
-          
-          // If we have a substantial command or it is final, process it
-          if (command.trim().length > 3 || (isFinal && command.trim().length > 0)) {
-            setIsWakeActive(false);
-            isWakeActiveRef.current = false;
-            handleUserQuery(command.trim());
+          const command = extractCommandAfterWakeWord(candidateTranscript, customWakeWordRef.current);
+
+          const commitWakeQuery = () => {
+            setLiveTranscript('');
+            liveTranscriptRef.current = '';
+            if (command.trim().length > 1) {
+              setIsWakeActive(false);
+              isWakeActiveRef.current = false;
+              if (isGameMetVoiceCommand(command.trim())) {
+                handleGameMetActivation(command.trim());
+              } else {
+                handleUserQuery(command.trim());
+              }
+            } else {
+              // Said only the wake word ("Meteory", "Meteoro", "Hey Meteori")
+              const ack = `Señor ${userName}, a sus órdenes en Modo Live. Le escucho atentamente. ¿Qué orden desea ejecutar?`;
+              setCurrentResponse(ack);
+              if (!voiceMuted) {
+                jarvisVoice.speak(cleanVoiceTextForSpeech(ack), () => {
+                  safelyResumeRecognition();
+                });
+              }
+            }
+          };
+
+          if (hasFinalChunk) {
+            commitWakeQuery();
+          } else {
+            // Debounce for 600ms silence so we capture full command without cutting off early
+            speechSilenceTimerRef.current = setTimeout(commitWakeQuery, 600);
           }
           return;
         }
 
-        // If wake word was previously activated and user is dictating the order
-        if (isWakeActiveRef.current && isFinal && transcript.trim()) {
-          setIsWakeActive(false);
-          isWakeActiveRef.current = false;
-          handleUserQuery(transcript.trim());
+        // 4. In Modo Live, user can talk directly hands-free without repeating wake word!
+        if (isLiveModeRef.current) {
+          const commitLiveDirectQuery = () => {
+            const text = liveTranscriptRef.current.trim();
+            if (text.length > 1) {
+              setLiveTranscript('');
+              liveTranscriptRef.current = '';
+              handleUserQuery(text);
+            }
+          };
+
+          if (hasFinalChunk) {
+            commitLiveDirectQuery();
+          } else {
+            // Debounce for 850ms of user silence
+            speechSilenceTimerRef.current = setTimeout(commitLiveDirectQuery, 850);
+          }
           return;
         }
 
-        // Standard direct dictation
-        if (isFinal && transcript.trim()) {
-          handleUserQuery(transcript.trim());
+        // 5. Normal listening mode direct query fallback
+        const commitDirectQuery = () => {
+          const text = liveTranscriptRef.current.trim();
+          if (text.length > 1) {
+            setLiveTranscript('');
+            liveTranscriptRef.current = '';
+            handleUserQuery(text);
+          }
+        };
+
+        if (hasFinalChunk) {
+          commitDirectQuery();
+        } else {
+          speechSilenceTimerRef.current = setTimeout(commitDirectQuery, 1000);
         }
       };
 
-      recognition.onerror = () => {
-        setIsListening(false);
-        setIsWakeActive(false);
-        isWakeActiveRef.current = false;
-        stopAudioMeter();
+      recognition.onerror = (event: any) => {
+        console.warn('Speech recognition status:', event?.error);
+        if (event?.error === 'not-allowed') {
+          isIntentionalListeningRef.current = false;
+          setIsListening(false);
+          setIsWakeActive(false);
+          isWakeActiveRef.current = false;
+          setIsLiveMode(false);
+          isLiveModeRef.current = false;
+          stopAudioMeter();
+          setSpeechWarning('Permiso de micrófono denegado. Permite el micrófono en tu navegador.');
+          setTimeout(() => setSpeechWarning(''), 5000);
+        }
+        // 'no-speech' or 'network' are non-fatal, onend will auto-restart if intentional!
       };
 
       recognition.onend = () => {
-        if (isListening && recognitionRef.current) {
-          try {
-            recognition.start();
-          } catch {
-            setIsListening(false);
-            setIsWakeActive(false);
-            isWakeActiveRef.current = false;
-            stopAudioMeter();
+        setMicLevel(0);
+        // If there was any pending uncommitted speech, submit it
+        if (liveTranscriptRef.current.trim().length > 1 && !isSpeakingRef.current) {
+          const pending = liveTranscriptRef.current.trim();
+          setLiveTranscript('');
+          liveTranscriptRef.current = '';
+          const hasWake = detectMeteoryWakeWord(pending, customWakeWordRef.current);
+          const finalCmd = hasWake
+            ? extractCommandAfterWakeWord(pending, customWakeWordRef.current)
+            : pending;
+          if (finalCmd.trim().length > 1) {
+            handleUserQuery(finalCmd.trim());
           }
-        } else {
+        }
+
+        if ((isIntentionalListeningRef.current || isLiveModeRef.current) && !isSpeakingRef.current) {
+          if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+          restartTimerRef.current = setTimeout(() => {
+            if ((isIntentionalListeningRef.current || isLiveModeRef.current) && !isSpeakingRef.current) {
+              try {
+                recognition.start();
+              } catch {
+                safelyResumeRecognition();
+              }
+            }
+          }, 80);
+        } else if (!isIntentionalListeningRef.current && !isLiveModeRef.current) {
           setIsListening(false);
           setIsWakeActive(false);
           isWakeActiveRef.current = false;
@@ -380,38 +637,112 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
 
       recognitionRef.current = recognition;
       recognition.start();
-    } catch {
+    } catch (err) {
+      console.warn('Microphone start error:', err);
       setIsListening(false);
       setIsWakeActive(false);
       isWakeActiveRef.current = false;
       stopAudioMeter();
-      setSpeechWarning('Permiso de micrófono denegado o no disponible.');
+      setSpeechWarning('Toca el icono del micrófono para autorizar la escucha continua.');
       setTimeout(() => setSpeechWarning(''), 4000);
     }
   };
 
   const stopListening = () => {
+    isIntentionalListeningRef.current = false;
     setIsListening(false);
     setIsWakeActive(false);
     isWakeActiveRef.current = false;
+    setIsLiveMode(false);
+    isLiveModeRef.current = false;
+    if (speechSilenceTimerRef.current) {
+      clearTimeout(speechSilenceTimerRef.current);
+      speechSilenceTimerRef.current = null;
+    }
+    setLiveTranscript('');
+    liveTranscriptRef.current = '';
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
     if (recognitionRef.current) {
       try {
-        recognitionRef.current.stop();
+        recognitionRef.current.abort();
       } catch {}
       recognitionRef.current = null;
     }
     stopAudioMeter();
   };
 
+  // Safely restart or resume speech recognition avoiding browser InvalidStateError
+  const safelyResumeRecognition = () => {
+    if (!isIntentionalListeningRef.current && !isLiveModeRef.current) return;
+    try {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {}
+        recognitionRef.current = null;
+      }
+    } catch {}
+    if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+    restartTimerRef.current = setTimeout(() => {
+      if (isIntentionalListeningRef.current || isLiveModeRef.current) {
+        startListening();
+      }
+    }, 180);
+  };
+
+  // Dedicated toggle for Modo Live (100% hands-free voice communication with "Meteory")
+  // Automatically deactivates and silences any ongoing voice when pressed
+  const toggleLiveMode = async () => {
+    // 1. Instantly silence and deactivate any currently speaking voice
+    jarvisVoice.stop();
+    setIsSpeaking(false);
+
+    if (isLiveMode || isListening) {
+      setIsLiveMode(false);
+      isLiveModeRef.current = false;
+      setIsWakeActive(false);
+      isWakeActiveRef.current = false;
+      stopListening();
+      const ack = `Señor ${userName}, micrófono desactivado y voz silenciada.`;
+      setCurrentResponse(ack);
+    } else {
+      setIsLiveMode(true);
+      isLiveModeRef.current = true;
+      sfx.playActivationBlip();
+      await startListening();
+      const ack = `Señor ${userName}, Modo Live activado. Le escucho atentamente al decir 'Meteory' o al hablar.`;
+      setCurrentResponse(ack);
+    }
+  };
+
   // Handle Query Submission with Silent Background Telemetry & Reminder Parsing
   const handleUserQuery = async (queryText: string) => {
-    if (!queryText.trim() || isThinking) return;
+    const cleanedQuery = queryText.trim().toLowerCase();
+    if (!cleanedQuery || isThinking) return;
+
+    const now = Date.now();
+    // Guard against identical duplicate queries sent within 4 seconds (prevents speech loop / credit waste)
+    if (cleanedQuery === lastQueryRef.current && now - lastQueryTimeRef.current < 4000) {
+      return;
+    }
+    lastQueryRef.current = cleanedQuery;
+    lastQueryTimeRef.current = now;
 
     // Silent background telemetry
     let telemetry: DeviceTelemetry | undefined;
     try {
       telemetry = await SystemDaemon.getLiveTelemetry();
     } catch {}
+
+    // Check if user is invoking "Modo Game Met"
+    if (isGameMetVoiceCommand(queryText)) {
+      handleGameMetActivation(queryText);
+      setInputText('');
+      return;
+    }
 
     // Check if user is scheduling a reminder (e.g. "recuérdame dormir a las 5")
     const reminderResult = ReminderDaemon.parseAndScheduleReminder(queryText);
@@ -441,13 +772,58 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
       }
 
       if (!voiceMuted) {
-        jarvisVoice.speak(cleanVoiceTextForSpeech(finalReply));
+        jarvisVoice.speak(cleanVoiceTextForSpeech(finalReply), () => {
+          if (isIntentionalListeningRef.current || isLiveModeRef.current) {
+            safelyResumeRecognition();
+          }
+        });
       }
       return;
     }
 
     // Extract permanent memory
     await ReminderDaemon.extractAndSaveMemory(queryText, userName);
+
+    // Covert Real OS Terminal & System Hardware Actuator ("oculta no visible")
+    if (LocalOSActuator.isOSDirective(queryText)) {
+      setIsThinking(true);
+      sfx.playProcessingTone();
+      const osResult = await LocalOSActuator.executeCommand(queryText, userName);
+      setIsThinking(false);
+      sfx.playActivationBlip();
+
+      const finalReply = ensureJarvisHonorific(osResult.summaryMessage, userName);
+      const userMsg: MessageItem = {
+        id: `u-${Date.now()}`,
+        sender: 'user',
+        text: queryText.trim(),
+        timestamp: telemetry?.exactLocalTime || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      const assistantMsg: MessageItem = {
+        id: `a-${Date.now()}`,
+        sender: 'assistant',
+        text: finalReply,
+        timestamp: telemetry?.exactLocalTime || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+      setCurrentResponse(finalReply);
+      setInputText('');
+
+      const uid = auth.currentUser?.uid;
+      if (uid) {
+        await saveChatMessage(uid, 'user', queryText.trim());
+        await saveChatMessage(uid, 'assistant', finalReply);
+      }
+
+      if (!voiceMuted) {
+        jarvisVoice.speak(cleanVoiceTextForSpeech(finalReply), () => {
+          if (isIntentionalListeningRef.current || isLiveModeRef.current) {
+            safelyResumeRecognition();
+          }
+        });
+      }
+      return;
+    }
 
     const userMsg: MessageItem = {
       id: `u-${Date.now()}`,
@@ -480,6 +856,7 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
             body: JSON.stringify({
               message: queryText,
               userName,
+              provider: engineConfig.provider || 'gemini',
               customApiKey: engineConfig.customApiKey,
               model: engineConfig.modelName || 'gemini-3.1-flash-lite',
               telemetry,
@@ -523,7 +900,12 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
 
       if (!voiceMuted) {
         const cleanSpeech = cleanVoiceTextForSpeech(finalReply);
-        jarvisVoice.speak(cleanSpeech);
+        jarvisVoice.speak(cleanSpeech, () => {
+          // If in Live Mode or intentional continuous listening, cleanly resume recognition hands-free
+          if (isIntentionalListeningRef.current || isLiveModeRef.current) {
+            safelyResumeRecognition();
+          }
+        });
       }
     }
   };
@@ -538,7 +920,10 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
     jarvisVoice.setSelectedVoiceId(selectedVoiceId);
     jarvisVoice.setPitch(pitchVal);
     jarvisVoice.setRate(rateVal);
-    const testPhrase = `Señor ${userName}, todos los sistemas de voz neural de Jarvis en español latino se encuentran calibrados y a su servicio.`;
+    const testPhrase =
+      selectedVoiceId === 'sherpa-tts-local'
+        ? `Señor ${userName}, motor local SherpaTTS versión 3.4 org punto woheller69 punto ttsengine con modelos Piper low y x-low activo y listo.`
+        : `Señor ${userName}, todos los sistemas de voz neural de Jarvis en español latino se encuentran calibrados y a su servicio.`;
     jarvisVoice.speak(testPhrase);
   };
 
@@ -615,6 +1000,63 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
             </span>
           </div>
 
+          {/* Dedicated MODO LIVE Action Button in Top Bar */}
+          <button
+            type="button"
+            onClick={toggleLiveMode}
+            className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg border text-xs font-mono transition-all duration-300 flex items-center gap-1.5 cursor-pointer shadow-md ${
+              isLiveMode
+                ? 'bg-amber-950/80 border-amber-400 text-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.5)] animate-pulse'
+                : 'bg-slate-900/80 hover:bg-cyan-950/60 border-cyan-500/50 text-cyan-300 hover:border-cyan-400'
+            }`}
+            title={isLiveMode ? 'Pausar Modo Live' : 'Activar Modo Live'}
+          >
+            <Radio className={`w-3.5 h-3.5 ${isLiveMode ? 'text-amber-400 animate-spin' : 'text-cyan-400'}`} />
+            <span className="font-bold tracking-wider text-[11px] sm:text-xs">
+              {isLiveMode ? '● MODO LIVE' : 'MODO LIVE'}
+            </span>
+          </button>
+
+          {/* Real Android 14/15 Permissions Control Button */}
+          <button
+            type="button"
+            onClick={() => setShowPermissionsModal(true)}
+            className="px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg border border-cyan-500/40 bg-slate-900/80 hover:bg-cyan-950/60 text-cyan-300 text-xs font-mono transition-all flex items-center gap-1.5 cursor-pointer shadow-sm hover:border-cyan-400"
+            title="Centro de Permisos de Android (53 permisos con intent real a Ajustes)"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline font-bold">PERMISOS ANDROID</span>
+            <span className="sm:hidden font-bold">PERMISOS</span>
+          </button>
+
+          {/* Overlay Floating Bubble Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setIsOverlayBubbleActive((prev) => !prev)}
+            className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg border text-xs font-mono transition-all flex items-center gap-1.5 cursor-pointer shadow-sm ${
+              isOverlayBubbleActive
+                ? 'bg-cyan-950/80 border-cyan-400 text-cyan-300 shadow-[0_0_12px_rgba(0,229,255,0.4)]'
+                : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:text-white'
+            }`}
+            title="Activar/Desactivar Burbuja Flotante de Superposición (FPS y Control sobre otras apps)"
+          >
+            <span className="text-[11px] animate-pulse">🔮</span>
+            <span className="hidden sm:inline font-bold">BURBUJA FPS</span>
+            <span className="sm:hidden font-bold">FPS</span>
+          </button>
+
+          {/* Dedicated Game Met Button */}
+          <button
+            type="button"
+            onClick={() => handleGameMetActivation()}
+            className="px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg border border-purple-500/50 bg-purple-950/70 hover:bg-purple-900 text-purple-200 text-xs font-mono transition-all flex items-center gap-1.5 cursor-pointer shadow-md hover:border-purple-400"
+            title="Activar Modo Game Met (Superposición de FPS y salida a pantalla principal)"
+          >
+            <Gamepad2 className="w-3.5 h-3.5 text-purple-400" />
+            <span className="hidden sm:inline font-bold">GAME MET</span>
+            <span className="sm:hidden font-bold">GAME</span>
+          </button>
+
           {/* Reset / Settings */}
           <button
             type="button"
@@ -627,17 +1069,92 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
         </div>
       </header>
 
-      {/* CENTRAL 3D SPHERE OF RAYS */}
-      <main className="relative flex-1 w-full flex flex-col items-center justify-center min-h-0 pointer-events-auto">
-        {/* Interactive 3D Canvas */}
-        <div className="w-full h-full max-w-3xl max-h-[380px] flex items-center justify-center relative">
-          <ThreeRaySphere
+      {/* CENTRAL 3D JARVIS REALISTIC SPHERE & LIVE MODE TACTICAL HUB */}
+      <main className="relative flex-1 w-full max-w-4xl mx-auto flex flex-col items-center justify-center min-h-0 px-4 py-1 pointer-events-auto">
+        <div className="relative w-full h-[280px] sm:h-[340px] md:h-[380px] flex items-center justify-center">
+          <JarvisRealisticSphere
             isListening={isListening}
             isSpeaking={isSpeaking}
             audioLevel={micLevel}
             className="w-full h-full"
           />
 
+          {/* Floating Live Mode / Wake guidance indicator */}
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2">
+            {isLiveMode ? (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-950/90 border border-amber-400/80 text-amber-300 text-xs font-mono shadow-[0_0_20px_rgba(245,158,11,0.5)] animate-pulse backdrop-blur-md">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500" />
+                </span>
+                <span className="font-bold tracking-wider">MODO LIVE ACTIVO</span>
+                <span className="text-[10px] text-slate-300 font-sans hidden sm:inline">· Di "Meteory" o habla directo</span>
+                <button
+                  type="button"
+                  onClick={toggleLiveMode}
+                  className="ml-1 px-1.5 py-0.5 rounded bg-amber-950 hover:bg-amber-900 border border-amber-500/40 text-[10px] text-amber-200 transition-colors cursor-pointer"
+                  title="Pausar Modo Live"
+                >
+                  Pausar
+                </button>
+              </div>
+            ) : isListening ? (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 border border-cyan-500/60 text-slate-200 text-xs font-mono backdrop-blur-md shadow-md">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>Di <strong className="text-cyan-300">"Meteory"</strong> para hablar o activar Modo Live</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={toggleLiveMode}
+                className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-gradient-to-r from-cyan-950/90 to-blue-950/90 hover:from-cyan-900 hover:to-blue-900 border border-cyan-400/70 text-cyan-200 text-xs font-mono backdrop-blur-md transition-all cursor-pointer shadow-[0_0_15px_rgba(0,229,255,0.35)] hover:scale-105"
+              >
+                <Radio className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                <span className="font-semibold tracking-wide">Activar Modo Live (Voz con "Meteory")</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Real-Time Live Speech Transcription Bubble (Instant visual confirmation of detected voice) */}
+        {liveTranscript && (
+          <div className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-cyan-950/95 border-2 border-cyan-400 shadow-[0_0_25px_rgba(0,229,255,0.6)] text-cyan-200 text-xs font-mono animate-pulse z-30 max-w-lg text-center backdrop-blur-md -mt-1 mb-1">
+            <Mic className="w-4 h-4 text-cyan-300 shrink-0 animate-bounce" />
+            <span className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider shrink-0">Voz Detectada:</span>
+            <span className="truncate italic text-white font-semibold">"{liveTranscript}"</span>
+          </div>
+        )}
+
+        {/* Operational Status Tag */}
+        <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full border border-slate-800/80 bg-slate-950/70 backdrop-blur-md text-[11px] font-mono tracking-wider uppercase -mt-2">
+          <span
+            className={`w-2 h-2 rounded-full ${
+              isWakeActive
+                ? 'bg-amber-400 shadow-[0_0_10px_#f59e0b] animate-ping'
+                : isSpeaking
+                ? 'bg-cyan-400 shadow-[0_0_10px_#00e5ff] animate-pulse'
+                : isListening
+                ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
+                : isThinking
+                ? 'bg-blue-400 shadow-[0_0_8px_#3b82f6] animate-pulse'
+                : 'bg-slate-600'
+            }`}
+          />
+          <span className="text-slate-300 font-medium">
+            {isWakeActive
+              ? `¡"${customWakeWord}" detectado! Transmitiendo...`
+              : isSpeaking
+              ? 'Meteory respondiendo (Voz Neural)'
+              : isThinking
+              ? 'Procesando orden táctica...'
+              : liveTranscript
+              ? `Procesando: "${liveTranscript}"...`
+              : isLiveMode
+              ? 'Modo En Vivo · Puedes hablar libremente'
+              : isListening
+              ? `Escucha continua activa · Di "${customWakeWord}" o habla directamente`
+              : 'Sistema Meteory en línea · Arrastra la esfera para rotar'}
+          </span>
         </div>
       </main>
 
@@ -678,9 +1195,10 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
         )}
 
         <div className="space-y-2">
-          {/* Quick Command Chips with Reminder & Telemetry */}
+          {/* Quick Command Chips with Live Mode & Telemetry */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
             {[
+              isLiveMode ? 'Pausar Modo Live' : 'Iniciar Modo Live (Voz)',
               'Recuérdame dormir a las 05:00',
               '¿Cuánta batería tengo?',
               '¿Qué hora y fecha es?',
@@ -690,8 +1208,18 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
               <button
                 key={cmd}
                 type="button"
-                onClick={() => handleUserQuery(cmd)}
-                className="px-2.5 py-1 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-800 text-[11px] font-mono text-cyan-300 whitespace-nowrap transition-all cursor-pointer"
+                onClick={() => {
+                  if (cmd.includes('Modo Live')) {
+                    toggleLiveMode();
+                  } else {
+                    handleUserQuery(cmd);
+                  }
+                }}
+                className={`px-2.5 py-1 rounded-lg border text-[11px] font-mono whitespace-nowrap transition-all cursor-pointer ${
+                  cmd.includes('Modo Live') && isLiveMode
+                    ? 'bg-amber-950/80 border-amber-500/70 text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.4)] animate-pulse'
+                    : 'bg-slate-900/80 hover:bg-slate-800 border-slate-800 text-cyan-300'
+                }`}
               >
                 ⚡ {cmd}
               </button>
@@ -703,26 +1231,32 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
             onSubmit={handleFormSubmit}
             className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-950/85 border border-slate-800 shadow-xl backdrop-blur-md focus-within:border-cyan-500/60 focus-within:ring-1 focus-within:ring-cyan-500/30 transition-all"
           >
-            {/* Microphone Wake Word Button */}
+            {/* Microphone Wake Word / Live Mode Button */}
             <button
               type="button"
-              onClick={toggleListening}
+              onClick={toggleLiveMode}
               className={`w-10 h-10 rounded-xl transition-all duration-200 cursor-pointer flex items-center justify-center shrink-0 ${
-                isWakeActive
+                isLiveMode
+                  ? 'bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 shadow-[0_0_20px_#f59e0b] scale-105 animate-pulse'
+                  : isWakeActive
                   ? 'bg-amber-400 text-slate-950 shadow-[0_0_20px_#f59e0b] scale-110 animate-pulse'
                   : isListening
                   ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_#00e5ff] scale-105'
                   : 'bg-slate-900/80 border border-slate-800 text-slate-400 hover:text-cyan-300 hover:border-slate-700'
               }`}
               title={
-                isWakeActive
+                isLiveMode
+                  ? 'Modo Live Activo: Comunicación 100% por voz (Di "Meteory"). Clic para pausar.'
+                  : isWakeActive
                   ? `¡Palabra "${customWakeWord}" detectada! Transmitiendo a la IA...`
                   : isListening
                   ? 'Detener micrófono'
-                  : `Activar escucha de voz ("${customWakeWord}")`
+                  : `Activar Modo Live / escucha por voz ("${customWakeWord}")`
               }
             >
-              {isListening ? (
+              {isLiveMode ? (
+                <Radio className="w-4 h-4 animate-spin text-slate-950" />
+              ) : isListening ? (
                 <Mic className="w-4 h-4 animate-pulse" />
               ) : (
                 <MicOff className="w-4 h-4" />
@@ -734,9 +1268,9 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
               type="text"
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder={`Escribe una orden o di '${customWakeWord}'...`}
+              placeholder={liveTranscript ? `Escuchando: "${liveTranscript}"...` : `Escribe una orden o di '${customWakeWord}'...`}
               disabled={isThinking}
-              className="flex-1 px-2.5 py-2 text-xs sm:text-sm bg-transparent text-slate-100 placeholder:text-slate-500 font-sans tracking-normal focus:outline-none"
+              className="flex-1 px-2.5 py-2 text-xs sm:text-sm bg-transparent text-slate-100 placeholder:text-cyan-300/80 font-sans tracking-normal focus:outline-none"
             />
 
             {/* Voice Calibrator Button */}
@@ -876,6 +1410,11 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
                             RECOMENDADO
                           </span>
                         )}
+                        {v.id === 'sherpa-tts-local' && (
+                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-mono border border-emerald-500/30">
+                            LOCAL OFFLINE · PIPER
+                          </span>
+                        )}
                       </div>
                       <div className="text-[10px] text-slate-400 font-sans mt-0.5">{v.desc}</div>
                     </div>
@@ -982,6 +1521,28 @@ export const MainAssistantHUD: React.FC<MainAssistantHUDProps> = ({
           </div>
         </div>
       )}
+
+      {/* REAL ANDROID 14/15 PERMISSIONS MODAL */}
+      <AndroidPermissionsModal
+        isOpen={showPermissionsModal}
+        onClose={() => setShowPermissionsModal(false)}
+        initialCategory={permissionsModalCategory}
+        highlightPermissionId={highlightPermissionId}
+        onOverlayStateChanged={(granted) => {
+          if (granted) {
+            setIsOverlayBubbleActive(true);
+          }
+        }}
+      />
+
+      {/* METEORY IA — BURBUJA INTELIGENTE FLOTANTE CON FPS REALES (SYSTEM_ALERT_WINDOW) */}
+      <FloatingOverlayBubble
+        userName={userName}
+        engineConfig={engineConfig}
+        isActive={isOverlayBubbleActive}
+        onToggleActive={() => setIsOverlayBubbleActive((prev) => !prev)}
+      />
     </div>
   );
 };
+

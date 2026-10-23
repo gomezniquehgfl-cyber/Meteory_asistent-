@@ -1,0 +1,5 @@
+local-wake>=0.1.0
+sounddevice
+soundfile
+numpy
+scipy

@@ -17,6 +17,7 @@ import {
   testFirestoreConnection,
   FirebaseUser,
 } from './firebase.ts';
+import { NeonCableFrame } from './components/NeonCableFrame.tsx';
 import { ShieldCheck } from 'lucide-react';
 
 type AppStep = 'auth' | 'user_setup' | 'engine_setup' | 'main';
@@ -29,6 +30,7 @@ export default function App() {
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [engineConfig, setEngineConfig] = useState<EngineConfig>({
     mode: 'cloud',
+    provider: 'gemini',
     modelName: 'gemini-3.1-flash-lite',
     customApiKey: undefined,
   });
@@ -207,37 +209,39 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen w-full bg-[#020617] text-slate-100 flex flex-col justify-center items-center relative overflow-hidden font-hud">
-      {/* Dynamic Cyber Ambient Background */}
-      <div className="absolute inset-0 bg-cyber-grid opacity-20 pointer-events-none" />
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-[radial-gradient(circle,rgba(0,102,255,0.15)_0%,transparent_70%)] pointer-events-none" />
+    <NeonCableFrame>
+      <div className="min-h-screen w-full bg-[#020617] text-slate-100 flex flex-col justify-center items-center relative overflow-hidden font-hud">
+        {/* Dynamic Cyber Ambient Background */}
+        <div className="absolute inset-0 bg-cyber-grid opacity-20 pointer-events-none" />
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-[radial-gradient(circle,rgba(0,102,255,0.15)_0%,transparent_70%)] pointer-events-none" />
 
-      {step === 'auth' && (
-        <div className="w-full px-4 py-8 flex items-center justify-center">
-          <GoogleAuthScreen onSuccess={handleAuthSuccess} />
-        </div>
-      )}
+        {step === 'auth' && (
+          <div className="w-full px-4 py-8 flex items-center justify-center">
+            <GoogleAuthScreen onSuccess={handleAuthSuccess} />
+          </div>
+        )}
 
-      {step === 'user_setup' && (
-        <div className="w-full px-4 py-8 flex items-center justify-center">
-          <UserSetupScreen initialName={userName} onConfirm={handleUserConfirmed} />
-        </div>
-      )}
+        {step === 'user_setup' && (
+          <div className="w-full px-4 py-8 flex items-center justify-center">
+            <UserSetupScreen initialName={userName} onConfirm={handleUserConfirmed} />
+          </div>
+        )}
 
-      {step === 'engine_setup' && (
-        <div className="w-full px-4 py-8 flex items-center justify-center">
-          <EngineSetupScreen userName={userName} onConfirm={handleEngineConfirmed} />
-        </div>
-      )}
+        {step === 'engine_setup' && (
+          <div className="w-full px-4 py-8 flex items-center justify-center">
+            <EngineSetupScreen userName={userName} onConfirm={handleEngineConfirmed} />
+          </div>
+        )}
 
-      {step === 'main' && (
-        <MainAssistantHUD
-          userName={userName}
-          userEmail={userEmail}
-          engineConfig={engineConfig}
-          onResetSession={handleResetSession}
-        />
-      )}
-    </div>
+        {step === 'main' && (
+          <MainAssistantHUD
+            userName={userName}
+            userEmail={userEmail}
+            engineConfig={engineConfig}
+            onResetSession={handleResetSession}
+          />
+        )}
+      </div>
+    </NeonCableFrame>
   );
 }

@@ -3,15 +3,37 @@ import assert from 'node:assert/strict';
 import {
   ensureJarvisHonorific,
   detectMeteoryWakeWord,
+  isLiveModeVoiceCommand,
+  isGameMetVoiceCommand,
   extractCommandAfterWakeWord,
   cleanVoiceTextForSpeech,
   processLocalNeuralResponse
 } from './assistant-logic.ts';
 
+test('isLiveModeVoiceCommand detects live mode voice activation phrases', () => {
+  assert.equal(isLiveModeVoiceCommand('activar modo live'), true);
+  assert.equal(isLiveModeVoiceCommand('iniciar modo en vivo'), true);
+  assert.equal(isLiveModeVoiceCommand('meteory pon modo live'), true);
+  assert.equal(isLiveModeVoiceCommand('como te llamas'), false);
+});
+
+test('isGameMetVoiceCommand detects game met activation phrases', () => {
+  assert.equal(isGameMetVoiceCommand('activa tu modo game met'), true);
+  assert.equal(isGameMetVoiceCommand('iniciar modo game met'), true);
+  assert.equal(isGameMetVoiceCommand('modo game met'), true);
+  assert.equal(isGameMetVoiceCommand('activar game met'), true);
+  assert.equal(isGameMetVoiceCommand('inicia el modo game met'), true);
+  assert.equal(isGameMetVoiceCommand('hola meteory como estas'), false);
+});
+
 test('extractCommandAfterWakeWord extracts pure user command with Hey Meteory and custom hotwords', () => {
   assert.equal(extractCommandAfterWakeWord('Hey Meteory cuánta batería tengo'), 'cuánta batería tengo');
   assert.equal(extractCommandAfterWakeWord('Meteory cuánta batería tengo'), 'cuánta batería tengo');
   assert.equal(extractCommandAfterWakeWord('Oye Meteory, qué hora es'), 'qué hora es');
+  assert.equal(extractCommandAfterWakeWord('mete oro qué hora es'), 'qué hora es');
+  assert.equal(extractCommandAfterWakeWord('meteoro que ora es'), 'que ora es');
+  assert.equal(extractCommandAfterWakeWord('mete hoy que hora es'), 'que hora es');
+  assert.equal(extractCommandAfterWakeWord('mi teoria cuánta batería tengo'), 'cuánta batería tengo');
   assert.equal(extractCommandAfterWakeWord('Meteory'), '');
   assert.equal(extractCommandAfterWakeWord('Jarvis diagnostica el sistema', 'Jarvis'), 'diagnostica el sistema');
 });
@@ -22,6 +44,13 @@ test('detectMeteoryWakeWord identifies Hey Meteory and custom hotwords', () => {
   assert.equal(detectMeteoryWakeWord('Oye Meteory que hora es'), true);
   assert.equal(detectMeteoryWakeWord('Meteori activa los motores'), true);
   assert.equal(detectMeteoryWakeWord('Asistente Meteory reporte'), true);
+  assert.equal(detectMeteoryWakeWord('mete oro que hora es'), true);
+  assert.equal(detectMeteoryWakeWord('mete hoy que hora es'), true);
+  assert.equal(detectMeteoryWakeWord('mete oye que hora es'), true);
+  assert.equal(detectMeteoryWakeWord('mi teoria que hora es'), true);
+  assert.equal(detectMeteoryWakeWord('meteo que hora es'), true);
+  assert.equal(detectMeteoryWakeWord('meteoro qué hora es'), true);
+  assert.equal(detectMeteoryWakeWord('le grite meteory que ora es'), true);
   assert.equal(detectMeteoryWakeWord('Jarvis reporte táctico', 'Jarvis'), true);
   assert.equal(detectMeteoryWakeWord('buenos dias computadora'), false);
 });

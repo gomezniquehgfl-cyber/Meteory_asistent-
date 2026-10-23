@@ -81,3 +81,24 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 229, 255, 0.55);
 }
+
+/* Neon Perimeter Cable Flow Keyframes */
+@keyframes neon-flow-x {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes neon-flow-x-reverse {
+  0% { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+
+@keyframes neon-flow-y {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+
+@keyframes neon-flow-y-reverse {
+  0% { transform: translateY(100%); }
+  100% { transform: translateY(-100%); }
+}

@@ -4,13 +4,15 @@ import path from 'path';
 import { defineConfig, Plugin } from 'vite';
 import { handleGeminiChat } from './src/server/geminiHandler.ts';
 import { handleNeuralTTS } from './src/server/ttsHandler.ts';
+import { handleElevenLabsTTS } from './src/server/elevenlabsHandler.ts';
+import { handleOSTerminalCommand } from './src/server/osTerminalHandler.ts';
 
 function apiChatPlugin(): Plugin {
   return {
     name: 'api-chat-plugin',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
-        // Chat endpoint
+        // Chat endpoint (Gemini, OpenAI, OpenRouter)
         if (req.url?.startsWith('/api/chat') && req.method === 'POST') {
           let bodyStr = '';
           req.on('data', chunk => {
@@ -28,6 +30,30 @@ function apiChatPlugin(): Plugin {
               res.setHeader('Content-Type', 'application/json');
               res.statusCode = 500;
               res.end(JSON.stringify({ error: error?.message || 'Error en el núcleo de IA' }));
+            }
+          });
+          return;
+        }
+
+        // ElevenLabs Ultra-Realistic TTS endpoint
+        if (req.url?.startsWith('/api/elevenlabs') && req.method === 'POST') {
+          let bodyStr = '';
+          req.on('data', chunk => {
+            bodyStr += chunk;
+          });
+          req.on('end', async () => {
+            try {
+              const body = JSON.parse(bodyStr || '{}');
+              const audioBuffer = await handleElevenLabsTTS(body);
+              res.setHeader('Content-Type', 'audio/mpeg');
+              res.setHeader('Content-Length', audioBuffer.length);
+              res.statusCode = 200;
+              res.end(audioBuffer);
+            } catch (err: unknown) {
+              const error = err as Error;
+              res.setHeader('Content-Type', 'application/json');
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: error?.message || 'Error en ElevenLabs TTS' }));
             }
           });
           return;
@@ -52,6 +78,32 @@ function apiChatPlugin(): Plugin {
               res.setHeader('Content-Type', 'application/json');
               res.statusCode = 500;
               res.end(JSON.stringify({ error: error?.message || 'Error en síntesis neural' }));
+            }
+          });
+          return;
+        }
+
+        // Hidden OS Terminal & Native System Hardware Actuator endpoint
+        if (req.url?.startsWith('/api/os-exec') && req.method === 'POST') {
+          let bodyStr = '';
+          req.on('data', chunk => {
+            bodyStr += chunk;
+          });
+          req.on('end', async () => {
+            try {
+              const body = JSON.parse(bodyStr || '{}');
+              const result = await handleOSTerminalCommand(body);
+              res.setHeader('Content-Type', 'application/json');
+              res.statusCode = 200;
+              res.end(JSON.stringify(result));
+            } catch (err: unknown) {
+              const error = err as Error;
+              res.setHeader('Content-Type', 'application/json');
+              res.statusCode = 500;
+              res.end(JSON.stringify({
+                success: false,
+                error: error?.message || 'Error en terminal del sistema operativo'
+              }));
             }
           });
           return;

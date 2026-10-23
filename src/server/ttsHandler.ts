@@ -32,7 +32,7 @@ export async function handleNeuralTTS(body: TTSRequestBody): Promise<Buffer> {
     text,
     voice = 'es-MX-JorgeNeural',
     pitch = '-4Hz',
-    rate = '+0%',
+    rate = '-10%',
   } = body;
 
   const cleanText = prepareJarvisText(text || 'Señor, sistemas en línea.');
@@ -54,7 +54,7 @@ export async function handleNeuralTTS(body: TTSRequestBody): Promise<Buffer> {
       const tts = new EdgeTTS({
         voice: voice || 'es-MX-JorgeNeural',
         pitch: pitch || '-4Hz',
-        rate: rate || '+0%',
+        rate: rate || '-10%',
       });
 
       await tts.ttsPromise(cleanText, tmpFile);

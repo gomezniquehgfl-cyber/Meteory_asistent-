@@ -98,12 +98,27 @@ export interface NeuralVoiceInfo {
   locale: string;
 }
 
+import { SherpaTTSEngine } from './sherpa-tts.ts';
+import { CoquiXTTSEngine } from './coqui-xtts.ts';
+
 export const NEURAL_VOICES: NeuralVoiceInfo[] = [
+  {
+    id: 'coqui-xtts-v2',
+    name: 'Coqui TTS — XTTS v2 (GGUF 4-bit)',
+    desc: 'Modelo xtts_v2.0.2_4bit_q4_0.gguf · ~500 MB · Requiere 1.5 - 2 GB RAM · 100% Offline Web y APK',
+    locale: 'Local / Offline GGUF (XTTS v2.0.2)',
+  },
   {
     id: 'es-MX-JorgeNeural',
     name: 'Jorge (JARVIS Original)',
     desc: 'Voz masculina latinoamericana cálida, calmada y autoritaria',
     locale: 'es-MX (Latinoamérica)',
+  },
+  {
+    id: 'sherpa-tts-local',
+    name: 'SherpaTTS v3.4 (Local Offline)',
+    desc: 'Motor org.woheller69.ttsengine · Modelos Piper low / x_low · 100% Gratis e ilimitado',
+    locale: 'Local / Offline (Next-gen Kaldi)',
   },
   {
     id: 'es-MX-CecilioNeural',
@@ -131,7 +146,8 @@ export class JarvisSpeechEngine {
   private onSpeakingChangeCallbacks: ((speaking: boolean) => void)[] = [];
   private selectedVoiceId = 'es-MX-JorgeNeural';
   private pitch = '-4Hz'; // Deep baritone offset
-  private rate = '+0%';
+  private rate = '-10%'; // Calmer, slightly slower deliberate cadence
+  private elevenLabsApiKey: string = '';
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -143,7 +159,24 @@ export class JarvisSpeechEngine {
           if (parsed.pitch) this.pitch = parsed.pitch;
           if (parsed.rate) this.rate = parsed.rate;
         }
+        const elKey = localStorage.getItem('meteory_elevenlabs_api_key');
+        if (elKey) this.elevenLabsApiKey = elKey;
       } catch {}
+    }
+  }
+
+  public getElevenLabsApiKey(): string {
+    return this.elevenLabsApiKey;
+  }
+
+  public setElevenLabsApiKey(key: string) {
+    this.elevenLabsApiKey = key.trim();
+    if (typeof window !== 'undefined') {
+      if (key.trim()) {
+        localStorage.setItem('meteory_elevenlabs_api_key', key.trim());
+      } else {
+        localStorage.removeItem('meteory_elevenlabs_api_key');
+      }
     }
   }
 
@@ -232,10 +265,91 @@ export class JarvisSpeechEngine {
       }
     } catch {}
 
+    // 0. Try ElevenLabs Ultra-Realistic Voice if API Key is configured
+    let elevenLabsExhausted = false;
+    if (this.elevenLabsApiKey) {
+      try {
+        const elUrl = `${getApiBaseUrl()}/api/elevenlabs`;
+        const elResp = await fetch(elUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text,
+            apiKey: this.elevenLabsApiKey,
+            voiceId: 'nPczCjzI2devNBz1zQrb', // Deep baritone Latin Jarvis
+          }),
+        });
+        if (elResp.ok) {
+          const audioBlob = await elResp.blob();
+          const audioUrl = URL.createObjectURL(audioBlob);
+          const audio = new Audio(audioUrl);
+          this.activeAudio = audio;
+
+          audio.onplay = () => {
+            this.setSpeaking(true);
+          };
+          audio.onended = () => {
+            this.setSpeaking(false);
+            URL.revokeObjectURL(audioUrl);
+            this.activeAudio = null;
+            onEnd?.();
+          };
+          audio.onerror = () => {
+            this.setSpeaking(false);
+            URL.revokeObjectURL(audioUrl);
+            this.activeAudio = null;
+          };
+
+          await audio.play();
+          return;
+        } else {
+          // Status 401, 402, 429: Credits exhausted or quota exceeded!
+          elevenLabsExhausted = true;
+          console.warn('[Voz] Créditos ElevenLabs agotados. Conmutando a SherpaTTS v3.4 (org.woheller69.ttsengine - Piper low/x_low)...');
+        }
+      } catch (e) {
+        elevenLabsExhausted = true;
+        console.warn('ElevenLabs no disponible, activando motor local SherpaTTS v3.4:', e);
+      }
+    }
+
+    // 0.5. Coqui TTS — XTTS v2 (GGUF 4-bit) Jarvis Engine
+    // Engaged when user selects Coqui XTTS OR when ElevenLabs credits are exhausted!
+    if (this.selectedVoiceId === 'coqui-xtts-v2' || elevenLabsExhausted) {
+      if (elevenLabsExhausted) {
+        console.warn('Créditos ElevenLabs agotados. Conmutando automáticamente a Coqui XTTS v2 (xtts_v2.0.2_4bit_q4_0.gguf - Jarvis Baritone)...');
+      }
+      const coquiSpoke = await CoquiXTTSEngine.speak(
+        text,
+        () => this.setSpeaking(true),
+        () => {
+          this.setSpeaking(false);
+          onEnd?.();
+        }
+      );
+      if (coquiSpoke) {
+        return;
+      }
+    }
+
+    // 1. SherpaTTS v3.4 Engine (org.woheller69.ttsengine · Piper low / x_low) as secondary offline fallback
+    if (this.selectedVoiceId === 'sherpa-tts-local') {
+      const sherpaSpoke = await SherpaTTSEngine.speak(
+        text,
+        () => this.setSpeaking(true),
+        () => {
+          this.setSpeaking(false);
+          onEnd?.();
+        }
+      );
+      if (sherpaSpoke) {
+        return;
+      }
+    }
+
+    // 2. Try server neural EdgeTTS
     let attempts = 0;
     let success = false;
-
-    // 1. Try server neural TTS first
     while (attempts < 2 && !success) {
       attempts++;
       try {
@@ -314,20 +428,24 @@ export class JarvisSpeechEngine {
 
     const utterance = new SpeechSynthesisUtterance(clean);
     utterance.lang = 'es-MX';
-    utterance.pitch = 0.8; // Deep baritone tone for Jarvis feel
-    utterance.rate = 0.96; // Calm, deliberate cadence
+    utterance.pitch = 0.55; // Deep authoritative baritone Jarvis resonance
+    utterance.rate = 0.80; // Calm, measured deliberate cadence
 
+    const sherpaVoice = SherpaTTSEngine.findSherpaVoice();
     const voices = synth.getVoices();
-    const bestVoice = voices.find(
-      (v) =>
-        (v.lang.includes('es') || v.lang.includes('ES')) &&
-        (v.name.toLowerCase().includes('mexico') ||
-          v.name.toLowerCase().includes('latino') ||
-          v.name.toLowerCase().includes('pablo') ||
-          v.name.toLowerCase().includes('male') ||
-          v.name.toLowerCase().includes('jorge') ||
-          v.name.toLowerCase().includes('carlos'))
-    ) || voices.find((v) => v.lang.startsWith('es'));
+    const bestVoice =
+      sherpaVoice ||
+      voices.find(
+        (v) =>
+          (v.lang.includes('es') || v.lang.includes('ES')) &&
+          (v.name.toLowerCase().includes('mexico') ||
+            v.name.toLowerCase().includes('latino') ||
+            v.name.toLowerCase().includes('pablo') ||
+            v.name.toLowerCase().includes('male') ||
+            v.name.toLowerCase().includes('jorge') ||
+            v.name.toLowerCase().includes('carlos'))
+      ) ||
+      voices.find((v) => v.lang.startsWith('es'));
 
     if (bestVoice) {
       utterance.voice = bestVoice;

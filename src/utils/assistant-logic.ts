@@ -43,24 +43,53 @@ export function detectMeteoryWakeWord(transcript: string, customWakeWord?: strin
   const normalized = transcript
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
 
   const defaultVariations = [
+    'hey meteori',
+    'hey meteoring',
     'hey meteory',
     'hey meteor',
-    'hey meteori',
+    'hey meteoro',
+    'meteori',
+    'meteoring',
     'meteory',
     'meteor',
+    'meteoro',
+    'meteorito',
+    'mete oro',
+    'mete hoy',
+    'mete oye',
+    'mete ori',
+    'mete o ri',
+    'mi teoria',
+    'miteoria',
+    'meteo',
+    'metheori',
+    'metheoring',
     'metheory',
-    'meteori',
+    'oye meteori',
+    'oye meteoring',
     'oye meteory',
+    'oye meteoro',
+    'oye mete oro',
+    'hola meteori',
     'hola meteory',
+    'hola meteoro',
+    'asistente meteori',
     'asistente meteory',
-    'oye meteor',
-    'hola meteor',
+    'asistente meteor',
+    'asistente meteoro',
   ];
 
   if (defaultVariations.some((w) => normalized.includes(w))) {
+    return true;
+  }
+
+  // Regex phonetic pattern: matches any variation starting with meteor/metheor or spaced 'mete oro'
+  const WAKE_REGEX = /\b(?:hey\s+|oye\s+|hola\s+|ok\s+|asistente\s+)?(?:meth?eor[a-z0-9]*|meth?e\s*oro|meth?e\s*oye|meth?e\s*hoy|meth?e\s*or[ií]|mi\s*teor[ií][a-z]*|meth?eo)\b/i;
+  if (WAKE_REGEX.test(normalized)) {
     return true;
   }
 
@@ -79,21 +108,83 @@ export function detectMeteoryWakeWord(transcript: string, customWakeWord?: strin
 }
 
 /**
- * Extracts and isolates the query or command spoken after "Hey Meteory", "Meteory",
- * or the custom wake word.
- * Example: "Hey Meteory qué hora es" -> "qué hora es"
- * Example: "Meteory cuánta batería tengo" -> "cuánta batería tengo"
+ * Detects voice commands that explicitly request entering or activating Modo Live.
+ */
+export function isLiveModeVoiceCommand(transcript: string): boolean {
+  if (!transcript) return false;
+  const normalized = transcript
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  const livePatterns = [
+    'modo live',
+    'modo en vivo',
+    'activar modo live',
+    'activar modo en vivo',
+    'iniciar modo live',
+    'iniciar modo en vivo',
+    'poner modo live',
+    'poner modo en vivo',
+    'entrar a modo live',
+  ];
+
+  return livePatterns.some((p) => normalized.includes(p));
+}
+
+/**
+ * Detects voice or text commands that request activating "Modo Game Met"
+ * (e.g. "activa tu modo game met", "modo game met", "iniciar game met").
+ */
+export function isGameMetVoiceCommand(transcript: string): boolean {
+  if (!transcript) return false;
+  const normalized = transcript
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+  const gameMetPatterns = [
+    'game met',
+    'gamemet',
+    'modo game met',
+    'modo gamemet',
+    'activa tu modo game met',
+    'activa el modo game met',
+    'activar tu modo game met',
+    'activar modo game met',
+    'activar el modo game met',
+    'iniciar modo game met',
+    'inicia modo game met',
+    'iniciar game met',
+    'inicia game met',
+    'poner modo game met',
+    'modo juego meteory',
+    'modo game',
+    'activar game met',
+    'activa game met',
+  ];
+
+  return gameMetPatterns.some((pattern) => normalized.includes(pattern));
+}
+
+/**
+ * Extracts and isolates the query or command spoken after "Hey Meteory", "Meteori",
+ * "Meteoring", or custom wake word.
  */
 export function extractCommandAfterWakeWord(transcript: string, customWakeWord?: string): string {
   if (!transcript) return '';
 
   let cleaned = transcript
-    .replace(/^(?:hey\s+|oye\s+|hola\s+|asistente\s+)?meteor(?:y|i|e)?\s*[,.:;]?\s*/i, '')
+    .replace(
+      /\b(?:hey\s+|oye\s+|hola\s+|ok\s+|asistente\s+)?(?:meth?eor[a-z0-9]*|meth?e\s*oro|meth?e\s*oye|meth?e\s*hoy|meth?e\s*or[ií]|mi\s*teor[ií][a-z]*|meth?eo)\b\s*[,.:;]?\s*/gi,
+      ''
+    )
     .trim();
 
   if (customWakeWord && customWakeWord.trim().length > 1) {
     const escaped = customWakeWord.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const customRegex = new RegExp(`^(?:hey\\s+|oye\\s+|hola\\s+)?${escaped}\\s*[,.:;]?\\s*`, 'i');
+    const customRegex = new RegExp(`\\b(?:hey\\s+|oye\\s+|hola\\s+)?${escaped}\\b\\s*[,.:;]?\\s*`, 'gi');
     cleaned = cleaned.replace(customRegex, '').trim();
   }
 
@@ -131,6 +222,14 @@ export function processLocalNeuralResponse(prompt: string, userName: string, tel
     return `${honorific}, sistema neuronal local en línea. Protocolos de seguridad activos. ¿En qué puedo asistirle?`;
   }
 
+  // Real OS Power-Saver Directives
+  if (p.includes('ahorro') && (p.includes('bateria') || p.includes('batería') || p.includes('energia') || p.includes('energía') || p.includes('pila'))) {
+    if (p.includes('desactiva') || p.includes('desactivar') || p.includes('quitar') || p.includes('apagar')) {
+      return `${honorific}, modo de ahorro de energía desactivado en el sistema operativo. Frecuencias de reloj y subsistema gráfico reanudados a rendimiento pleno.`;
+    }
+    return `${honorific}, directiva de ahorro de energía ejecutada con éxito en el sistema operativo. Los núcleos de procesamiento han sido conmutados a perfil de bajo consumo y los procesos secundarios han sido suspendidos.`;
+  }
+
   // Real-time battery status command
   if (p.includes('bateria') || p.includes('batería') || p.includes('pila') || p.includes('carga')) {
     if (telemetry?.batteryLevel !== undefined) {
@@ -142,8 +241,8 @@ export function processLocalNeuralResponse(prompt: string, userName: string, tel
     return `${honorific}, los sensores de energía indican que el sistema de alimentación se mantiene estable en parámetros óptimos.`;
   }
 
-  // Exact real-time query
-  if (p.includes('hora') || p.includes('tiempo')) {
+  // Exact real-time query (supports 'hora', 'tiempo', 'que ora es')
+  if (p.includes('hora') || p.includes('tiempo') || p.includes('que ora') || /\b(h?ora|tiempo)\b/i.test(p)) {
     const timeStr = telemetry?.exactLocalTime || new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true });
     return `${honorific}, el cronómetro del sistema marca exactamente las ${timeStr}.`;
   }
@@ -171,11 +270,16 @@ export function processLocalNeuralResponse(prompt: string, userName: string, tel
   // Full system status & diagnostics
   if (p.includes('estado') || p.includes('status') || p.includes('sistema') || p.includes('diagnostico') || p.includes('diagnóstico')) {
     const batPart = telemetry?.batteryLevel !== undefined ? ` · Batería: ${telemetry.batteryLevel}%` : '';
-    return `${honorific}, los diagnósticos en segundo plano indican: Núcleo 3D de plasma al 100%, telemetría activa${batPart}, latencia de 1.2 milisegundos y protocolos de seguridad operando de manera impecable.`;
+    return `${honorific}, los diagnósticos en segundo plano indican: Núcleo táctico neuronal al 100%, telemetría activa${batPart}, latencia de 1.2 milisegundos y protocolos de seguridad operando de manera impecable.`;
   }
 
-  if (p.includes('quien eres') || p.includes('quién eres') || p.includes('tu nombre')) {
-    return `${honorific}, soy METEORY ASISTEN, versión 0.1.3 beta. Su sistema inteligente de asistencia cibernética de alta precisión.`;
+  if (p.includes('quien eres') || p.includes('quién eres') || p.includes('tu nombre') || p.includes('mision') || p.includes('misión')) {
+    return `${honorific}, soy Meteory IA, un asistente virtual inspirado en Jarvis, diseñado para ser la IA más útil, segura y respetuosa que existe. Mi misión es servirle sin reemplazarlo y facilitar su vida sin invadirla.`;
+  }
+
+  // Rule 9: clear explanation for "¿Por qué hiciste eso?"
+  if (p.includes('por que hiciste') || p.includes('por qué hiciste') || p.includes('porque hiciste')) {
+    return `${honorific}, ejecuté esa acción para responder con precisión y seguridad a su directiva, manteniendo en todo momento la integridad y privacidad de su sistema.`;
   }
 
   if (p.includes('clima') || p.includes('temperatura')) {
